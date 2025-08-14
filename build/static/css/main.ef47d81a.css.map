@@ -1,0 +1,1 @@
+{"version":3,"file":"static/css/main.ef47d81a.css","mappings":"AACA,gBAA6C,4BAA8B,CAAvD,WAAY,CAAE,QAA2C,CAC7E,OAA4B,UAAW,CAA9B,gBAAgC","sources":["index.css"],"sourcesContent":["\nhtml, body, #root { height: 100%; margin: 0; font-family: Arial, sans-serif; }\nbutton { padding: 8px 12px; margin: 6px; }\n"],"names":[],"sourceRoot":""}
