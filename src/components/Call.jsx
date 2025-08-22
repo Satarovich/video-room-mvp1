@@ -1,5 +1,5 @@
 // src/components/Call.jsx
-import React, { useEffect, useRef, useState, useMemo } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   useHMSActions,
   useHMSStore,
@@ -24,10 +24,8 @@ export default function Call({ role }) {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
 
-  // Находим "первого удалённого" участника (кроме себя)
-  const remotePeer = useMemo(() => {
-    return peers.find(p => p.id !== localPeer?.id);
-  }, [peers, localPeer]);
+  // Берём первого удалённого участника (кроме себя)
+  const remotePeer = useMemo(() => peers.find(p => p.id !== localPeer?.id) || null, [peers, localPeer]);
 
   const join = async () => {
     const r = role || 'guest';
@@ -37,7 +35,7 @@ export default function Call({ role }) {
       const userName = r === 'host' ? 'Teacher' : 'Student';
       const token = await getToken(r, `${userName}-${Math.floor(Math.random() * 10000)}`);
       await actions.join({ authToken: token, userName });
-      // Включаем камеру/мик сразу, чтобы было видно
+      // включим локальные устройства сразу после входа
       await actions.setLocalAudioEnabled(true);
       await actions.setLocalVideoEnabled(true);
     } catch (e) {
@@ -51,9 +49,13 @@ export default function Call({ role }) {
   const toggleCam = async () => { try { await actions.setLocalVideoEnabled(!isCamOn); } catch {} };
   const leave     = async () => { try { await actions.leave(); } catch {} };
 
+  // --- Экран до подключения ---
   if (!isConnected) {
     return (
-      <div style={{ display: 'grid', gap: 8 }}>
+      <div style={{ display: 'grid', gap: 10 }}>
+        <div style={{ fontSize: 13, color: '#666' }}>
+          Статус: не подключено
+        </div>
         <button onClick={join} disabled={loading} style={{ padding: '10px 16px' }}>
           {loading ? 'Подключаюсь…' : role === 'host' ? 'Зайти как преподаватель' : 'Присоединиться как ученик'}
         </button>
@@ -62,16 +64,22 @@ export default function Call({ role }) {
     );
   }
 
+  // --- Экран после подключения: только два «окна» (я и один удалённый) ---
   return (
     <div style={{ display: 'grid', gap: 12 }}>
-      {/* Панель управления */}
-      <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
+      {/* Статус и управление */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+        <span style={{ fontSize: 13, color: '#666' }}>
+          Статус: подключено · Участников: {peers.length}
+        </span>
         <button onClick={toggleMic}>{isMicOn ? 'Выключить микрофон' : 'Включить микрофон'}</button>
         <button onClick={toggleCam}>{isCamOn ? 'Выключить камеру' : 'Включить камеру'}</button>
         <button onClick={leave}>Выйти</button>
       </div>
 
-      {/* Ровно две плитки: Я и Один удалённый (если есть и камера включена) */}
+      {/* Ровно две плитки: локальная и первая удалённая.
+          Плитка показывается ТОЛЬКО если камера включена.
+          Если участник вышел/выключил камеру — плитка автоматически исчезает. */}
       <div
         style={{
           display: 'grid',
@@ -80,36 +88,36 @@ export default function Call({ role }) {
           alignItems: 'stretch'
         }}
       >
-        <PeerVideoTile peerId={localPeer?.id} name={(localPeer?.name || 'Вы')} hideIfNoVideo />
-        <PeerVideoTile peerId={remotePeer?.id} name={remotePeer?.name} hideIfNoVideo />
+        <PeerVideoTile peerId={localPeer?.id} name={(localPeer?.name || 'Вы')} />
+        <PeerVideoTile peerId={remotePeer?.id} name={remotePeer?.name} />
       </div>
+
+      {/* Подсказка, если удалённого пока нет */}
+      {!remotePeer && (
+        <div style={{ fontSize: 13, color: '#666' }}>
+          Ожидаем второго участника…
+        </div>
+      )}
     </div>
   );
 }
 
-/**
- * Плитка видео: показывает только если есть ВКЛЮЧЁННЫЙ видеотрек.
- * Если участник выключил камеру или вышел — плитка пропадает (никаких чёрных квадратов).
+/** Плитка видео:
+ *  - Показывается только если есть ВКЛЮЧЁННЫЙ видеотрек.
+ *  - Никаких чёрных заглушек: если камера выключена — плитки нет.
  */
-function PeerVideoTile({ peerId, name, hideIfNoVideo }) {
+function PeerVideoTile({ peerId, name }) {
   const actions = useHMSActions();
-  // selector подхватывает текущий видеопоток участника
-  const videoTrack = useHMSStore(selectCameraStreamByPeerID(peerId));
   const videoRef = useRef(null);
+  const videoTrack = useHMSStore(selectCameraStreamByPeerID(peerId));
 
-  // Если нужно скрывать при отсутствии видео — скрываем
-  if (hideIfNoVideo && (!peerId || !videoTrack || !videoTrack.enabled)) {
-    return null;
-  }
+  // скрываем плитку, если нет включённого видеотрека
+  if (!peerId || !videoTrack || !videoTrack.enabled) return null;
 
   useEffect(() => {
     const el = videoRef.current;
     if (!el || !videoTrack) return;
-    if (videoTrack.enabled) {
-      actions.attachVideo(videoTrack.id, el);
-    } else {
-      actions.detachVideo(videoTrack.id, el);
-    }
+    actions.attachVideo(videoTrack.id, el);
     return () => {
       try { actions.detachVideo(videoTrack.id, el); } catch {}
     };
@@ -120,12 +128,11 @@ function PeerVideoTile({ peerId, name, hideIfNoVideo }) {
       <div style={{ background: '#f6f6f6', padding: '6px 10px', fontSize: 14 }}>
         {name || 'Участник'}
       </div>
-      {/* Если поток есть и включён — видео; иначе — ничего (плитка скрывается на уровне return null) */}
       <video
         ref={videoRef}
         autoPlay
         playsInline
-        muted={false /* локальную дорожку мы мьютим в SDK, здесь можно не трогать */}
+        muted={false}
         style={{ width: '100%', aspectRatio: '16 / 9', background: '#000' }}
       />
     </div>
