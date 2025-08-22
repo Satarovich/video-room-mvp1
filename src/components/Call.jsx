@@ -1,4 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react';
+// src/components/Call.jsx
+import React, { useEffect, useRef, useState, useMemo } from 'react';
 import {
   useHMSActions,
   useHMSStore,
@@ -11,11 +12,6 @@ import {
 } from '@100mslive/react-sdk';
 import { getToken } from '../api';
 
-/**
- * Компонент комнаты 100ms.
- * - Если передан prop `role` ("guest" | "host"), покажет одну кнопку входа для этой роли.
- * - Если prop не передан — покажет две кнопки: Host и Guest.
- */
 export default function Call({ role }) {
   const actions = useHMSActions();
   const isConnected = useHMSStore(selectIsConnectedToRoom);
@@ -28,45 +24,39 @@ export default function Call({ role }) {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
 
-  const joinWithRole = async (r) => {
-    const chosenRole = r || role || 'guest';
+  // Находим "первого удалённого" участника (кроме себя)
+  const remotePeer = useMemo(() => {
+    return peers.find(p => p.id !== localPeer?.id);
+  }, [peers, localPeer]);
+
+  const join = async () => {
+    const r = role || 'guest';
     setLoading(true);
     setErr('');
     try {
-      const userName = chosenRole === 'host' ? 'Teacher' : 'Student';
-      const token = await getToken(chosenRole, `${userName}-${Math.floor(Math.random() * 10000)}`);
+      const userName = r === 'host' ? 'Teacher' : 'Student';
+      const token = await getToken(r, `${userName}-${Math.floor(Math.random() * 10000)}`);
       await actions.join({ authToken: token, userName });
+      // Включаем камеру/мик сразу, чтобы было видно
+      await actions.setLocalAudioEnabled(true);
+      await actions.setLocalVideoEnabled(true);
     } catch (e) {
-      console.error('join error', e);
-      setErr(e?.message || 'Не удалось получить/использовать токен');
+      setErr(e?.message || 'Не удалось подключиться');
     } finally {
       setLoading(false);
     }
   };
 
-  const toggleMic = async () => {
-    try { await actions.setLocalAudioEnabled(!isMicOn); } catch (e) { console.error(e); }
-  };
-  const toggleCam = async () => {
-    try { await actions.setLocalVideoEnabled(!isCamOn); } catch (e) { console.error(e); }
-  };
-  const leave = async () => {
-    try { await actions.leave(); } catch (e) { console.error(e); }
-  };
+  const toggleMic = async () => { try { await actions.setLocalAudioEnabled(!isMicOn); } catch {} };
+  const toggleCam = async () => { try { await actions.setLocalVideoEnabled(!isCamOn); } catch {} };
+  const leave     = async () => { try { await actions.leave(); } catch {} };
 
   if (!isConnected) {
     return (
       <div style={{ display: 'grid', gap: 8 }}>
-        {role ? (
-          <button onClick={() => joinWithRole(role)} disabled={loading} style={{ padding: '10px 16px' }}>
-            {loading ? 'Подключаюсь…' : role === 'host' ? 'Зайти как преподаватель' : 'Присоединиться как ученик'}
-          </button>
-        ) : (
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button onClick={() => joinWithRole('host')} disabled={loading}>Join as Host</button>
-            <button onClick={() => joinWithRole('guest')} disabled={loading}>Join as Guest</button>
-          </div>
-        )}
+        <button onClick={join} disabled={loading} style={{ padding: '10px 16px' }}>
+          {loading ? 'Подключаюсь…' : role === 'host' ? 'Зайти как преподаватель' : 'Присоединиться как ученик'}
+        </button>
         {err && <div style={{ color: 'crimson' }}>Ошибка: {err}</div>}
       </div>
     );
@@ -81,28 +71,36 @@ export default function Call({ role }) {
         <button onClick={leave}>Выйти</button>
       </div>
 
-      {/* Сетка участников */}
-      <PeersGrid peers={peers} localId={localPeer?.id} />
+      {/* Ровно две плитки: Я и Один удалённый (если есть и камера включена) */}
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(2, minmax(260px, 1fr))',
+          gap: 12,
+          alignItems: 'stretch'
+        }}
+      >
+        <PeerVideoTile peerId={localPeer?.id} name={(localPeer?.name || 'Вы')} hideIfNoVideo />
+        <PeerVideoTile peerId={remotePeer?.id} name={remotePeer?.name} hideIfNoVideo />
+      </div>
     </div>
   );
 }
 
-/* ===== Вспомогательные компоненты ===== */
-
-function PeersGrid({ peers, localId }) {
-  return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8 }}>
-      {peers.map(p => (
-        <PeerTile key={p.id} peerId={p.id} name={p.name} isLocal={p.id === localId} />
-      ))}
-    </div>
-  );
-}
-
-function PeerTile({ peerId, name, isLocal }) {
+/**
+ * Плитка видео: показывает только если есть ВКЛЮЧЁННЫЙ видеотрек.
+ * Если участник выключил камеру или вышел — плитка пропадает (никаких чёрных квадратов).
+ */
+function PeerVideoTile({ peerId, name, hideIfNoVideo }) {
   const actions = useHMSActions();
-  const videoRef = useRef(null);
+  // selector подхватывает текущий видеопоток участника
   const videoTrack = useHMSStore(selectCameraStreamByPeerID(peerId));
+  const videoRef = useRef(null);
+
+  // Если нужно скрывать при отсутствии видео — скрываем
+  if (hideIfNoVideo && (!peerId || !videoTrack || !videoTrack.enabled)) {
+    return null;
+  }
 
   useEffect(() => {
     const el = videoRef.current;
@@ -118,15 +116,16 @@ function PeerTile({ peerId, name, isLocal }) {
   }, [videoTrack, actions]);
 
   return (
-    <div style={{ border: '1px solid #ddd', borderRadius: 12, overflow: 'hidden' }}>
+    <div style={{ border: '1px solid #ddd', borderRadius: 12, overflow: 'hidden', minHeight: 200 }}>
       <div style={{ background: '#f6f6f6', padding: '6px 10px', fontSize: 14 }}>
-        {name} {isLocal ? '(вы)' : ''}
+        {name || 'Участник'}
       </div>
+      {/* Если поток есть и включён — видео; иначе — ничего (плитка скрывается на уровне return null) */}
       <video
         ref={videoRef}
         autoPlay
         playsInline
-        muted={isLocal}
+        muted={false /* локальную дорожку мы мьютим в SDK, здесь можно не трогать */}
         style={{ width: '100%', aspectRatio: '16 / 9', background: '#000' }}
       />
     </div>
