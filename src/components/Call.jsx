@@ -18,6 +18,7 @@ export default function Call({ role }) {
   const peers = useHMSStore(selectPeers);
   const localPeer = useHMSStore(selectLocalPeer);
 
+  // Текущее состояние микрофона/камеры берём из стора
   const isMicOn = useHMSStore(selectIsLocalAudioEnabled);
   const isCamOn = useHMSStore(selectIsLocalVideoEnabled);
 
@@ -48,15 +49,26 @@ export default function Call({ role }) {
     }
   };
 
+  // Переключатели: просто инвертируем состояние из стора
   const toggleMic = async () => {
-    const on = await actions.getLocalAudioEnabled();
-    await actions.setLocalAudioEnabled(!on);
+    try {
+      await actions.setLocalAudioEnabled(!isMicOn);
+    } catch (e) {
+      setErr(e?.message || 'Ошибка микрофона');
+    }
   };
+
   const toggleCam = async () => {
-    const on = await actions.getLocalVideoEnabled();
-    await actions.setLocalVideoEnabled(!on);
+    try {
+      await actions.setLocalVideoEnabled(!isCamOn);
+    } catch (e) {
+      setErr(e?.message || 'Ошибка камеры');
+    }
   };
-  const leave = async () => { try { await actions.leave(); } catch {} };
+
+  const leave = async () => {
+    try { await actions.leave(); } catch {}
+  };
 
   // --- экран до подключения ---
   if (!isConnected) {
@@ -93,21 +105,21 @@ export default function Call({ role }) {
           Ожидаем второго участника…
         </div>
       )}
+
+      {err && <div style={{ color: 'crimson' }}>Ошибка: {err}</div>}
     </div>
   );
 }
 
 /** Плитка видео через attach/detach:
- *  - Хуки вызываются всегда (правило React), но внутри эффекта стоят проверки.
  *  - Плитка показывается ТОЛЬКО если есть ВКЛЮЧЁННЫЙ видеотрек.
- *  - Никаких «чёрных квадратов»: если камера выключена/человек вышел — компонент возвращает null.
+ *  - Если камера выключена/участник вышел — возвращаем null (никаких «чёрных квадратов»).
  */
 function PeerVideoTile({ peerId, name, isLocal }) {
   const actions = useHMSActions();
   const videoRef = useRef(null);
   const videoTrack = useHMSStore(selectCameraStreamByPeerID(peerId));
 
-  // всегда вызываем эффект, но выходим, если трека нет
   useEffect(() => {
     const el = videoRef.current;
     const id = videoTrack?.id || videoTrack?.trackId;
@@ -116,7 +128,6 @@ function PeerVideoTile({ peerId, name, isLocal }) {
     if (videoTrack.enabled) {
       actions.attachVideo(id, el);
     } else {
-      // если трек выключили — аккуратно отцепим
       try { actions.detachVideo(id, el); } catch {}
     }
 
@@ -125,7 +136,6 @@ function PeerVideoTile({ peerId, name, isLocal }) {
     };
   }, [actions, videoTrack?.id, videoTrack?.trackId, videoTrack?.enabled]);
 
-  // если нет включённого видеотрека — ничего не рендерим
   if (!peerId || !videoTrack?.id || !videoTrack.enabled) return null;
 
   return (
