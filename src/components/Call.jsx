@@ -1,5 +1,5 @@
 // src/components/Call.jsx
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   useHMSActions,
   useHMSStore,
@@ -7,7 +7,8 @@ import {
   selectPeers,
   selectLocalPeer,
   selectCameraStreamByPeerID,
-  useVideo
+  selectIsLocalAudioEnabled,
+  selectIsLocalVideoEnabled,
 } from '@100mslive/react-sdk';
 import { getToken } from '../api';
 
@@ -17,12 +18,15 @@ export default function Call({ role }) {
   const peers = useHMSStore(selectPeers);
   const localPeer = useHMSStore(selectLocalPeer);
 
+  const isMicOn = useHMSStore(selectIsLocalAudioEnabled);
+  const isCamOn = useHMSStore(selectIsLocalVideoEnabled);
+
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
 
-  // Берём первого удалённого участника (кроме себя)
+  // первый удалённый участник (кроме меня)
   const remotePeer = useMemo(
-    () => peers.find(p => p.id !== localPeer?.id) || null,
+    () => peers.find(p => p.id && p.id !== localPeer?.id) || null,
     [peers, localPeer]
   );
 
@@ -34,7 +38,7 @@ export default function Call({ role }) {
       const userName = r === 'host' ? 'Teacher' : 'Student';
       const token = await getToken(r, `${userName}-${Math.floor(Math.random() * 10000)}`);
       await actions.join({ authToken: token, userName });
-      // Включаем устройства сразу после входа
+      // включим устройства сразу после входа
       await actions.setLocalAudioEnabled(true);
       await actions.setLocalVideoEnabled(true);
     } catch (e) {
@@ -54,7 +58,7 @@ export default function Call({ role }) {
   };
   const leave = async () => { try { await actions.leave(); } catch {} };
 
-  // До подключения — только кнопка и сообщение об ошибке
+  // --- экран до подключения ---
   if (!isConnected) {
     return (
       <div style={{ display: 'grid', gap: 10 }}>
@@ -67,21 +71,21 @@ export default function Call({ role }) {
     );
   }
 
-  // Подключено — показываем две плитки: я и первый удалённый (только если их камеры включены)
+  // --- после подключения: только две плитки (я и первый удалённый) ---
   return (
     <div style={{ display: 'grid', gap: 12 }}>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
         <span style={{ fontSize: 13, color: '#666' }}>
           Статус: подключено · Участников: {peers.length}
         </span>
-        <button onClick={toggleMic}>Микрофон вкл/выкл</button>
-        <button onClick={toggleCam}>Камера вкл/выкл</button>
+        <button onClick={toggleMic}>{isMicOn ? 'Выключить микрофон' : 'Включить микрофон'}</button>
+        <button onClick={toggleCam}>{isCamOn ? 'Выключить камеру' : 'Включить камеру'}</button>
         <button onClick={leave}>Выйти</button>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(260px, 1fr))', gap: 12 }}>
-        <VideoTile peerId={localPeer?.id} name={localPeer?.name || 'Вы'} isLocal />
-        <VideoTile peerId={remotePeer?.id} name={remotePeer?.name} />
+        <PeerVideoTile peerId={localPeer?.id} name={localPeer?.name || 'Вы'} isLocal />
+        <PeerVideoTile peerId={remotePeer?.id} name={remotePeer?.name} />
       </div>
 
       {!remotePeer && (
@@ -93,18 +97,36 @@ export default function Call({ role }) {
   );
 }
 
-/**
- * Универсальная плитка видео.
- * - Использует хук useVideo(trackId) — он сам корректно монтирует/демонтирует поток.
- * - Если видеотрек отсутствует или выключен — плитка не рендерится (никаких чёрных квадратов).
+/** Плитка видео через attach/detach:
+ *  - Хуки вызываются всегда (правило React), но внутри эффекта стоят проверки.
+ *  - Плитка показывается ТОЛЬКО если есть ВКЛЮЧЁННЫЙ видеотрек.
+ *  - Никаких «чёрных квадратов»: если камера выключена/человек вышел — компонент возвращает null.
  */
-function VideoTile({ peerId, name, isLocal }) {
+function PeerVideoTile({ peerId, name, isLocal }) {
+  const actions = useHMSActions();
+  const videoRef = useRef(null);
   const videoTrack = useHMSStore(selectCameraStreamByPeerID(peerId));
-  const trackId = videoTrack?.id || videoTrack?.trackId || undefined;
-  const ref = useVideo(trackId);
 
-  // Скрываем плитку, если нет включённого видеотрека
-  if (!peerId || !videoTrack || !videoTrack.enabled) return null;
+  // всегда вызываем эффект, но выходим, если трека нет
+  useEffect(() => {
+    const el = videoRef.current;
+    const id = videoTrack?.id || videoTrack?.trackId;
+    if (!el || !id) return;
+
+    if (videoTrack.enabled) {
+      actions.attachVideo(id, el);
+    } else {
+      // если трек выключили — аккуратно отцепим
+      try { actions.detachVideo(id, el); } catch {}
+    }
+
+    return () => {
+      try { actions.detachVideo(id, el); } catch {}
+    };
+  }, [actions, videoTrack?.id, videoTrack?.trackId, videoTrack?.enabled]);
+
+  // если нет включённого видеотрека — ничего не рендерим
+  if (!peerId || !videoTrack?.id || !videoTrack.enabled) return null;
 
   return (
     <div style={{ border: '1px solid #ddd', borderRadius: 12, overflow: 'hidden', minHeight: 200 }}>
@@ -112,11 +134,11 @@ function VideoTile({ peerId, name, isLocal }) {
         {name || 'Участник'}
       </div>
       <video
-        ref={ref}
+        ref={videoRef}
         autoPlay
         playsInline
         muted={!!isLocal}
-        style={{ width: '100%,', aspectRatio: '16 / 9', background: '#000' }}
+        style={{ width: '100%', aspectRatio: '16 / 9', background: '#000' }}
       />
     </div>
   );
