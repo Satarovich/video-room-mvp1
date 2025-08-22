@@ -1,4 +1,5 @@
-const API_BASE = 'https://youcan-backend.onrender.com';
+// src/api.js
+const API_BASE = 'https://youcan-backend.onrender.com'; // твой Render-бэкенд
 
 export async function getToken(role = 'guest', user = 'WebUser') {
   const res = await fetch(`${API_BASE}/api/token`, {
@@ -6,7 +7,16 @@ export async function getToken(role = 'guest', user = 'WebUser') {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ role, user })
   });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data?.error || 'Failed to get token');
+
+  let data = {};
+  try { data = await res.json(); } catch { /* оставим пустым */ }
+
+  if (!res.ok) {
+    const msg = (data && (data.error || data.detail)) ? JSON.stringify(data) : `HTTP ${res.status}`;
+    throw new Error(`Token error: ${msg}`);
+  }
+  if (!data?.token) {
+    throw new Error('Token error: empty response');
+  }
   return data.token;
 }
