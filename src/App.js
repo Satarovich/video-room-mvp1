@@ -1,24 +1,23 @@
-// frontend/src/App.jsx
+// src/App.jsx
 import React from 'react';
-import JoinButton from './components/JoinButton';
+import Call from './components/Call';
 
 export default function App() {
-  // Когда подключишь SDK 100ms — передай сюда колбэк onToken={joinWithToken}
   return (
-    <main style={{ display: 'grid', placeItems: 'center', height: '100vh' }}>
-      <div style={{ textAlign: 'center' }}>
-        <h1>Видеозвонок 100ms</h1>
+    <main style={{ display: 'grid', gap: 20, placeItems: 'center', padding: 24 }}>
+      <h1>Онлайн-уроки (100ms)</h1>
 
-        {/* Кнопка для ученика */}
-        <div style={{ marginTop: 12 }}>
-          <JoinButton role="guest" />
-        </div>
+      {/* Блок ученика */}
+      <section style={{ border: '1px solid #eee', borderRadius: 12, padding: 16, width: 'min(900px, 100%)' }}>
+        <h2 style={{ marginTop: 0 }}>Ученик</h2>
+        <Call role="guest" />
+      </section>
 
-        {/* Кнопка для преподавателя (если нужна на той же странице) */}
-        {/* <div style={{ marginTop: 12 }}>
-          <JoinButton role="host" />
-        </div> */}
-      </div>
+      {/* Блок преподавателя */}
+      <section style={{ border: '1px solid #eee', borderRadius: 12, padding: 16, width: 'min(900px, 100%)' }}>
+        <h2 style={{ marginTop: 0 }}>Преподаватель</h2>
+        <Call role="host" />
+      </section>
     </main>
   );
 }
